@@ -7,6 +7,7 @@ class Paciente {
   final bool usaMedicacion;
   final String adherencia;
   final int cantidadEstadosEmocionales;
+  bool consentiemiento = false;
 
   Paciente(
     Map map, {
@@ -18,5 +19,6 @@ class Paciente {
     required this.usaMedicacion,
     required this.adherencia,
     required this.cantidadEstadosEmocionales,
+    required this.consentiemiento,
   });
 }

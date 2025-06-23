@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../pacientes/models/paciente.dart';
+import '../../pacientes/ui/consentimiento_screen.dart';
 
 class GrabacionScreen extends StatefulWidget {
   final Paciente paciente;
@@ -17,19 +18,36 @@ class _GrabacionScreenState extends State<GrabacionScreen> {
   bool mostrarAprobacion = false;
   String veredicto = '';
 
-  void iniciarGrabacion() {
+  Future<void> iniciarGrabacion() async {
+    if (!widget.paciente.consentiemiento) {
+      final resultado = await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ConsentimientoScreen(paciente: widget.paciente),
+        ),
+      );
+
+      if (resultado != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se puede grabar sin consentimiento.'),
+          ),
+        );
+        return;
+      }
+    }
+
     setState(() {
       estaGrabando = true;
       resultadoObtenido = false;
     });
 
-    // Simula grabación y análisis
     Future.delayed(const Duration(seconds: 3), () {
       setState(() {
         estaGrabando = false;
         resultadoObtenido = true;
-        resultado = 'Depresión leve detectada'; // Mock
-        mostrarAprobacion = true; // Supongamos que el operador es especialista
+        resultado = 'Depresión leve detectada'; // Simulado
+        mostrarAprobacion = true;
       });
     });
   }

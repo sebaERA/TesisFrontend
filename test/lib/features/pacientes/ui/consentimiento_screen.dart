@@ -38,6 +38,7 @@ class _ConsentimientoScreenState extends State<ConsentimientoScreen> {
             const SizedBox(height: 20),
             const Text(
               'Este consentimiento permite registrar y analizar la voz del paciente para detectar síntomas de depresión. No se almacenará información personal identificable y los resultados se mantendrán confidenciales.',
+              textAlign: TextAlign.justify,
             ),
             const SizedBox(height: 20),
             CheckboxListTile(
@@ -52,7 +53,12 @@ class _ConsentimientoScreenState extends State<ConsentimientoScreen> {
             const SizedBox(height: 20),
             ElevatedButton(
               onPressed:
-                  consentimientoOtorgado ? () => Navigator.pop(context) : null,
+                  consentimientoOtorgado
+                      ? () {
+                        widget.paciente.consentiemiento = true;
+                        Navigator.pop(context, true); // ← devuelve true
+                      }
+                      : null,
               child: const Text('Aceptar'),
             ),
           ],

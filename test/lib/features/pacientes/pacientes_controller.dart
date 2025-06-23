@@ -2,7 +2,7 @@ import 'models/paciente.dart';
 
 class PacientesController {
   //simulacion de datos temrporales
-  final List<Paciente> _pacietes = [
+  final List<Paciente> _pacientes = [
     Paciente(
       {},
       id: '1',
@@ -13,6 +13,7 @@ class PacientesController {
       diagnosticoPrevio: false,
       usaMedicacion: false,
       adherencia: '',
+      consentiemiento: false,
     ),
     Paciente(
       {},
@@ -24,6 +25,7 @@ class PacientesController {
       diagnosticoPrevio: false,
       usaMedicacion: false,
       adherencia: '',
+      consentiemiento: false,
     ),
     Paciente(
       {},
@@ -35,9 +37,16 @@ class PacientesController {
       diagnosticoPrevio: false,
       usaMedicacion: false,
       adherencia: '',
+      consentiemiento: false,
     ),
   ];
-  List<Paciente> obtenerPacientes() {
-    return _pacietes;
+  List<Paciente> obtenerPacientes() => _pacientes;
+
+  Paciente obtenerPacientePorId(String id) =>
+      _pacientes.firstWhere((p) => p.id == id);
+
+  void registrarConsentimiento(String pacienteId) {
+    final paciente = _pacientes.firstWhere((p) => p.id == pacienteId);
+    paciente.consentiemiento = true;
   }
 }

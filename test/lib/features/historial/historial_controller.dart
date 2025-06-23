@@ -1,6 +1,6 @@
 import 'package:test/features/historial/models/resultado.dart';
 
-import '../evaluacion/models/resultado.dart';
+//import '../evaluacion/models/resultado.dart';
 
 class HistorialController {
   static List<ResultadoEvaluacion> obtenerHistorialPorPaciente(
