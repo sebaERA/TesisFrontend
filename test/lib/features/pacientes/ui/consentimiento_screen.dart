@@ -1,69 +1,67 @@
 import 'package:flutter/material.dart';
 import '../models/paciente.dart';
+import '../pacientes_controller.dart';
 
 class ConsentimientoScreen extends StatefulWidget {
   final Paciente paciente;
-
-  const ConsentimientoScreen({super.key, required this.paciente});
-
+  const ConsentimientoScreen({required this.paciente});
   @override
-  State<ConsentimientoScreen> createState() => _ConsentimientoScreenState();
+  createState() => _ConsentimientoScreenState();
 }
 
 class _ConsentimientoScreenState extends State<ConsentimientoScreen> {
-  bool consentimientoOtorgado = false;
-
-  void otorgarConsentimiento() {
-    setState(() {
-      consentimientoOtorgado = true;
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Consentimiento registrado correctamente')),
-    );
-  }
-
+  bool _busy = false, _agreed = false;
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Consentimiento Informado')),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          children: [
-            const Text(
-              'Consentimiento Informado',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 20),
-            const Text(
-              'Este consentimiento permite registrar y analizar la voz del paciente para detectar síntomas de depresión. No se almacenará información personal identificable y los resultados se mantendrán confidenciales.',
-              textAlign: TextAlign.justify,
-            ),
-            const SizedBox(height: 20),
+  Widget build(_) => Scaffold(
+    appBar: AppBar(title: Text('Consentimiento')),
+    body: Padding(
+      padding: EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Consentimiento Informado',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          SizedBox(height: 16),
+          Text(
+            'Se solicita permiso para grabar y analizar la voz...',
+            textAlign: TextAlign.justify,
+          ),
+          SizedBox(height: 24),
+          if (!widget.paciente.consentimiento) ...[
             CheckboxListTile(
-              value: consentimientoOtorgado,
-              onChanged: (value) {
-                if (value == true) otorgarConsentimiento();
-              },
-              title: const Text(
-                'Confirmo que el paciente ha otorgado el consentimiento.',
-              ),
+              title: Text('Otorgar consentimiento'),
+              value: _agreed,
+              onChanged: (v) => setState(() => _agreed = v!),
             ),
-            const SizedBox(height: 20),
+            SizedBox(height: 16),
             ElevatedButton(
               onPressed:
-                  consentimientoOtorgado
-                      ? () {
-                        widget.paciente.consentiemiento = true;
-                        Navigator.pop(context, true); // ← devuelve true
+                  _agreed && !_busy
+                      ? () async {
+                        setState(() => _busy = true);
+                        await PacientesController().registrarConsentimiento(
+                          widget.paciente.id,
+                          true,
+                        );
+                        Navigator.pop(context, true);
                       }
                       : null,
-              child: const Text('Aceptar'),
+              child:
+                  _busy
+                      ? CircularProgressIndicator(color: Colors.white)
+                      : Text('Aceptar'),
             ),
-          ],
-        ),
+          ] else
+            Center(
+              child: Text(
+                'Ya otorgó consentimiento',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+        ],
       ),
-    );
-  }
+    ),
+  );
 }

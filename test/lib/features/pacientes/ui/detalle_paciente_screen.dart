@@ -1,137 +1,142 @@
+// lib/features/pacientes/ui/detalle_paciente_screen.dart
+
 import 'package:flutter/material.dart';
-import 'package:test/features/evaluacion/ui/grabacion_screen.dart';
-import 'package:test/features/historial/ui/historial_detallado_screen.dart';
-import 'package:test/features/pacientes/ui/consentimiento_screen.dart';
+import 'package:fl_chart/fl_chart.dart';
+import 'package:test/features/evaluacion/models/resultado.dart';
+import 'package:test/features/pacientes/pacientes_controller.dart';
+import '../../evaluacion/ui/grabacion_screen.dart';
+import '../../pacientes/ui/consentimiento_screen.dart';
+import '../../historial/ui/historial_detallado_screen.dart';
 import '../models/paciente.dart';
 
-class DetallePacienteScreen extends StatelessWidget {
-  final Paciente paciente;
+import 'package:fl_chart/fl_chart.dart';
 
-  const DetallePacienteScreen({super.key, required this.paciente});
+class DetallePacienteScreen extends StatefulWidget {
+  final Paciente paciente;
+  const DetallePacienteScreen({required this.paciente});
+  @override
+  createState() => _DetallePacienteScreenState();
+}
+
+class _DetallePacienteScreenState extends State<DetallePacienteScreen> {
+  late Paciente _p;
+  List<Resultado> _hist = [];
+  bool _loading = true;
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Detalles del Paciente'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Configuración próximamente')),
-              );
-            },
+  void initState() {
+    super.initState();
+    _p = widget.paciente;
+    _loadData();
+  }
+
+  Future<void> _loadData() async {
+    final fresh = await PacientesController().obtenerPaciente(_p.id);
+    final hist = await PacientesController().obtenerHistorial(_p.id);
+    setState(() => _p = fresh);
+    setState(() => _hist = hist);
+    setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(_) => Scaffold(
+    appBar: AppBar(title: Text(_p.nombre)),
+    body:
+        _loading
+            ? Center(child: CircularProgressIndicator())
+            : SingleChildScrollView(
+              padding: EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 30,
+                        backgroundImage: AssetImage('assets/avatar.png'),
+                      ),
+                      SizedBox(width: 16),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _p.nombre,
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text('${_p.edad} • ${_p.sexo}'),
+                        ],
+                      ),
+                      Spacer(),
+                      Icon(
+                        _p.consentimiento ? Icons.check_circle : Icons.help,
+                        color: _p.consentimiento ? Colors.green : Colors.orange,
+                      ),
+                    ],
+                  ),
+                  SizedBox(height: 24),
+                  Text(
+                    'Depresión en el tiempo',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  SizedBox(height: 200, child: _buildChart()),
+                  SizedBox(height: 24),
+                  Row(
+                    children: [
+                      ElevatedButton(
+                        onPressed:
+                            () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder:
+                                    (context) =>
+                                        GrabacionRealScreen(paciente: _p),
+                              ),
+                            ).then((_) => _loadData()),
+                        child: Text('Iniciar'),
+                      ),
+                      SizedBox(width: 16),
+                      ElevatedButton(
+                        onPressed:
+                            () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder:
+                                    (context) =>
+                                        ConsentimientoScreen(paciente: _p),
+                              ),
+                            ).then((granted) {
+                              if (granted == true) _loadData();
+                            }),
+                        child: Text('Consentimiento'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+  );
+
+  Widget _buildChart() {
+    if (_hist.isEmpty) return Center(child: Text('Sin datos'));
+    final spots = List.generate(_hist.length, (i) {
+      return FlSpot(i.toDouble(), i.toDouble()); // mock: usa tu lógica
+    });
+    return LineChart(
+      LineChartData(
+        titlesData: FlTitlesData(show: false),
+        gridData: FlGridData(show: false),
+        borderData: FlBorderData(show: false),
+        lineBarsData: [
+          LineChartBarData(
+            spots: spots,
+            isCurved: true,
+            dotData: FlDotData(show: false),
+            belowBarData: BarAreaData(show: false),
           ),
         ],
-      ),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            const CircleAvatar(
-              radius: 50,
-              backgroundImage: AssetImage(
-                'assets/images/avatar.png',
-              ), // Usa tu propia imagen
-            ),
-            const SizedBox(height: 16),
-            Text(
-              paciente.nombre,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-            Text('${paciente.edad} años • ${paciente.sexo}'),
-            const SizedBox(height: 16),
-            Text(
-              'Diagnóstico Previo Validado: ${paciente.diagnosticoPrevio ? "Sí" : "No"}',
-            ),
-            const SizedBox(height: 10),
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Medicamentos:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '• Usa medicamentos: ${paciente.usaMedicacion ? "Sí" : "No"}',
-              ),
-            ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text('• Adherencia: ${paciente.adherencia}'),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Historial de Evaluaciones Emocionales',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 100,
-              child:
-                  Placeholder(), // Puedes reemplazar con un gráfico real más adelante
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Iniciar grabación próximamente'),
-                  ),
-                );
-              },
-              child: const Text('Iniciar Grabación de Voz'),
-            ),
-            OutlinedButton(
-              onPressed: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Ver consentimiento próximamente'),
-                  ),
-                );
-              },
-              child: const Text('Ver Consentimiento'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => GrabacionScreen(paciente: paciente),
-                  ),
-                );
-              },
-              child: const Text('Iniciar Grabación de Voz'),
-            ),
-            OutlinedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ConsentimientoScreen(paciente: paciente),
-                  ),
-                );
-              },
-              child: const Text('Ver Consentimiento'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder:
-                        (_) => HistorialDetalladoScreen(paciente: paciente),
-                  ),
-                );
-              },
-              child: const Text('Gestionar Historial Emocional'),
-            ),
-          ],
-        ),
       ),
     );
   }

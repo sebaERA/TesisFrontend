@@ -1,52 +1,34 @@
-import 'models/paciente.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import '../pacientes/models/paciente.dart';
+import '../evaluacion/models/resultado.dart';
 
 class PacientesController {
-  //simulacion de datos temrporales
-  final List<Paciente> _pacientes = [
-    Paciente(
-      {},
-      id: '1',
-      nombre: '',
-      edad: 0,
-      sexo: '',
-      cantidadEstadosEmocionales: 10,
-      diagnosticoPrevio: false,
-      usaMedicacion: false,
-      adherencia: '',
-      consentiemiento: false,
-    ),
-    Paciente(
-      {},
-      id: '2',
-      nombre: '',
-      edad: 0,
-      sexo: '',
-      cantidadEstadosEmocionales: 100,
-      diagnosticoPrevio: false,
-      usaMedicacion: false,
-      adherencia: '',
-      consentiemiento: false,
-    ),
-    Paciente(
-      {},
-      id: '3',
-      nombre: '',
-      edad: 0,
-      sexo: '',
-      cantidadEstadosEmocionales: 1000,
-      diagnosticoPrevio: false,
-      usaMedicacion: false,
-      adherencia: '',
-      consentiemiento: false,
-    ),
-  ];
-  List<Paciente> obtenerPacientes() => _pacientes;
+  final _base = 'http://10.0.2.2:3000/pacientes'; // usar tu IP / dominio
 
-  Paciente obtenerPacientePorId(String id) =>
-      _pacientes.firstWhere((p) => p.id == id);
+  Future<List<Paciente>> obtenerPacientes() async {
+    final r = await http.get(Uri.parse(_base));
+    final list = json.decode(r.body) as List;
+    return list.map((j) => Paciente.fromJson(j)).toList();
+  }
 
-  void registrarConsentimiento(String pacienteId) {
-    final paciente = _pacientes.firstWhere((p) => p.id == pacienteId);
-    paciente.consentiemiento = true;
+  Future<Paciente> obtenerPaciente(String id) async {
+    final r = await http.get(Uri.parse('$_base/$id'));
+    return Paciente.fromJson(json.decode(r.body));
+  }
+
+  Future<void> registrarConsentimiento(String id, bool consent) async {
+    final r = await http.patch(
+      Uri.parse('$_base/$id'),
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'consentimiento': consent}),
+    );
+    if (r.statusCode != 200) throw Exception('falló patch');
+  }
+
+  Future<List<Resultado>> obtenerHistorial(String id) async {
+    final r = await http.get(Uri.parse('$_base/$id/historial'));
+    final list = json.decode(r.body) as List;
+    return list.map((j) => Resultado.fromJson(j)).toList();
   }
 }

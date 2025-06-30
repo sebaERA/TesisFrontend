@@ -3,22 +3,19 @@ class Paciente {
   final String nombre;
   final int edad;
   final String sexo;
-  final bool diagnosticoPrevio;
-  final bool usaMedicacion;
-  final String adherencia;
-  final int cantidadEstadosEmocionales;
-  bool consentiemiento = false;
-
-  Paciente(
-    Map map, {
+  bool consentimiento;
+  Paciente({
     required this.id,
     required this.nombre,
     required this.edad,
     required this.sexo,
-    required this.diagnosticoPrevio,
-    required this.usaMedicacion,
-    required this.adherencia,
-    required this.cantidadEstadosEmocionales,
-    required this.consentiemiento,
+    required this.consentimiento,
   });
+  factory Paciente.fromJson(Map<String, dynamic> j) => Paciente(
+    id: j['idpacientes'].toString(),
+    nombre: j['nombre'],
+    edad: j['edad'],
+    sexo: j['sexo'],
+    consentimiento: j['consentimiento'],
+  );
 }

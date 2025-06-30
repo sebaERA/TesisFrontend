@@ -7,14 +7,24 @@ void main() {
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
-
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'App ELEAM',
-      theme: ThemeData(primarySwatch: Colors.indigo),
+      title: 'Mi App ELEAM',
+      // Ruta inicial (por ejemplo, login)
       initialRoute: '/login',
+      // Importamos nuestro mapa de rutas
       routes: appRoutes,
+      // Opcional: manejo de ruta desconocida
+      onUnknownRoute: (settings) {
+        return MaterialPageRoute(
+          builder:
+              (_) => const Scaffold(
+                body: Center(child: Text('Página no encontrada')),
+              ),
+        );
+      },
+      theme: ThemeData(primarySwatch: Colors.blue),
     );
   }
 }
