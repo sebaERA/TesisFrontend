@@ -5,6 +5,8 @@ import '../models/paciente.dart';
 import 'consentimiento_screen.dart';
 
 class PacientesScreen extends StatefulWidget {
+  const PacientesScreen({super.key});
+
   @override
   createState() => _PacientesScreenState();
 }
