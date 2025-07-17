@@ -1,129 +1,159 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:test/features/pacientes/models/paciente.dart';
-import '../models/resultado.dart';
-import '../../../service/canary_speech_service.dart';
-import '../../../service/audio_recorder_service.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'dart:io';
+
+import '../../pacientes/models/paciente.dart';
 
 class GrabacionRealScreen extends StatefulWidget {
   final Paciente paciente;
-  const GrabacionRealScreen({super.key, required this.paciente});
+  const GrabacionRealScreen({required this.paciente, super.key});
 
   @override
   State<GrabacionRealScreen> createState() => _GrabacionRealScreenState();
 }
 
 class _GrabacionRealScreenState extends State<GrabacionRealScreen> {
-  final AudioRecorderService _recorder = AudioRecorderService();
-  late CanarySpeechService _canary;
-  bool _isRecording = false;
-  bool _isAnalyzing = false;
-  String? _analysisResult;
-  String? _error;
+  bool _grabando = false;
+  bool _subiendo = false;
+  String? _mensaje;
 
-  @override
-  void initState() {
-    super.initState();
-    _canary = CanarySpeechService('TU_API_KEY_AQUÍ');
-  }
+  String? _audioPath;
 
-  @override
-  void dispose() {
-    _recorder.dispose();
-    super.dispose();
-  }
+  Future<void> _iniciarGrabacion() async {
+    setState(() {
+      _grabando = true;
+      _mensaje = null;
+    });
 
-  Future<void> _startRecording() async {
-    // Verifica consentimiento
-    if (!widget.paciente.consentimiento) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Debe registrar el consentimiento primero'),
+    final record = AudioRecorder();
+    if (await record.hasPermission()) {
+      Directory tempDir = await getTemporaryDirectory();
+      String path =
+          '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
+
+      await record.start(
+        RecordConfig(
+          encoder: AudioEncoder.wav,
+          bitRate: 128000,
+          sampleRate: 16000,
         ),
+        path: path,
       );
+
+      _audioPath = path;
+    } else {
+      setState(() {
+        _mensaje = 'No se concedió permiso de micrófono';
+      });
+    }
+  }
+
+  Future<void> _detenerGrabacionYSubir() async {
+    setState(() {
+      _grabando = false;
+      _subiendo = true;
+      _mensaje = 'Subiendo audio...';
+    });
+
+    final record = AudioRecorder();
+    final path = await record.stop();
+    if (path == null) {
+      setState(() {
+        _mensaje = 'No se generó archivo de audio';
+        _subiendo = false;
+      });
       return;
     }
 
-    final dir = await getTemporaryDirectory();
-    final path =
-        '${dir.path}/${widget.paciente.id}_${DateTime.now().millisecondsSinceEpoch}.wav';
-
-    if (await _recorder.tienePermiso()) {
-      await _recorder.iniciarGrabacion(path);
-      setState(() => _isRecording = true);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Permiso de micrófono denegado')),
-      );
-    }
-  }
-
-  Future<void> _stopAndAnalyze() async {
-    await _recorder.detenerGrabacion();
-    setState(() {
-      _isRecording = false;
-      _isAnalyzing = true;
-      _analysisResult = null;
-      _error = null;
-    });
-
     try {
-      // Obtén la ruta que usamos arriba
-      final dir = await getTemporaryDirectory();
-      final latestFile = Directory(dir.path)
-          .listSync()
-          .whereType<File>()
-          .where((f) => f.path.endsWith('.wav'))
-          .reduce(
-            (a, b) =>
-                a.lastModifiedSync().isAfter(b.lastModifiedSync()) ? a : b,
-          );
+      File file = File(path);
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse('http://10.0.2.2:8000/api/evaluar-audio'),
+      );
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          'file',
+          file.path,
+          contentType: MediaType('audio', 'wav'),
+        ),
+      );
+      request.fields['idpacientes'] = widget.paciente.id;
+      request.fields['idtiporesultado'] = '1'; // Ajusta según tu lógica
 
-      final json = await _canary.analyzeAudio(latestFile);
-      setState(() => _analysisResult = json.toString());
+      final response = await request.send();
+      final respStr = await response.stream.bytesToString();
+
+      setState(() {
+        _subiendo = false;
+        if (response.statusCode == 200) {
+          _mensaje = 'Audio subido y evaluado correctamente';
+        } else {
+          _mensaje = 'Error al subir audio: $respStr';
+        }
+      });
+
+      // Regresa automáticamente después de 2 segundos
+      Future.delayed(Duration(seconds: 2), () {
+        if (mounted) Navigator.pop(context);
+      });
     } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      setState(() => _isAnalyzing = false);
+      setState(() {
+        _subiendo = false;
+        _mensaje = 'Error al subir audio: $e';
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Grabación Real')),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
+      appBar: AppBar(title: Text('Grabación Real')),
+      body: Center(
         child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Text('Paciente: ${widget.paciente.nombre}'),
-            const SizedBox(height: 20),
-            if (_isRecording)
-              const Text('Grabando…', style: TextStyle(color: Colors.red))
-            else if (_isAnalyzing)
-              const Text('Analizando…', style: TextStyle(color: Colors.blue))
-            else if (_analysisResult != null)
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Text('Resultado: $_analysisResult'),
+            SizedBox(height: 32),
+            if (_grabando)
+              Text(
+                'Grabando...',
+                style: TextStyle(color: Colors.red, fontSize: 20),
+              ),
+            if (_subiendo)
+              Column(
+                children: [
+                  CircularProgressIndicator(),
+                  SizedBox(height: 12),
+                  Text(_mensaje ?? 'Subiendo...'),
+                ],
+              ),
+            if (!_grabando && !_subiendo)
+              ElevatedButton.icon(
+                icon: Icon(Icons.mic),
+                label: Text('Iniciar grabación'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                onPressed: _iniciarGrabacion,
+              ),
+            if (_grabando)
+              ElevatedButton.icon(
+                icon: Icon(Icons.stop),
+                label: Text('Detener y subir'),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                onPressed: _detenerGrabacionYSubir,
+              ),
+            if (_mensaje != null && !_subiendo)
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(
+                  _mensaje!,
+                  style: TextStyle(color: Colors.blue),
+                  textAlign: TextAlign.center,
                 ),
-              )
-            else if (_error != null)
-              Text('Error: $_error', style: const TextStyle(color: Colors.red)),
-            const Spacer(),
-
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                FloatingActionButton(
-                  heroTag: 'rec',
-                  backgroundColor: _isRecording ? Colors.red : Colors.green,
-                  child: Icon(_isRecording ? Icons.stop : Icons.mic),
-                  onPressed: _isRecording ? _stopAndAnalyze : _startRecording,
-                ),
-              ],
-            ),
+              ),
           ],
         ),
       ),

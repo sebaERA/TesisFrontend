@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'config/router.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized(); // <- esto es clave
   runApp(const MyApp());
 }
 
