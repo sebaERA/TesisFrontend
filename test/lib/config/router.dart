@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 // Pantallas de Autenticación y Home
 import 'package:test/features/auth/ui/login_screen.dart';
+import 'package:test/features/evaluacion/ui/grabacion_minima_screen.dart';
 import 'package:test/features/home/ui/home_screen.dart';
 
 // Pantallas de Pacientes
@@ -23,6 +24,16 @@ final Map<String, WidgetBuilder> appRoutes = {
   '/login': (context) => const LoginScreen(),
   '/home': (context) => const HomeScreen(),
   '/pacientes': (context) => PacientesScreen(),
+  '/prueba':
+      (context) => GrabacionMinimaScreen(
+        paciente: Paciente(
+          id: '1',
+          nombre: 'Prueba',
+          edad: 30,
+          sexo: 'M',
+          consentimiento: true,
+        ),
+      ),
 
   // Rutas que esperan recibir un objeto `Paciente` en `arguments`
   '/pacientes/detalle': (context) {
@@ -43,5 +54,9 @@ final Map<String, WidgetBuilder> appRoutes = {
   '/pacientes/historial': (context) {
     final paciente = ModalRoute.of(context)!.settings.arguments as Paciente;
     return HistorialDetalladoScreen(paciente: paciente);
+  },
+  '/prueba/grabacion_minima': (context) {
+    final paciente = ModalRoute.of(context)!.settings.arguments as Paciente;
+    return GrabacionMinimaScreen(paciente: paciente);
   },
 };

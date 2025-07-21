@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'dart:io';
@@ -20,33 +21,69 @@ class _GrabacionRealScreenState extends State<GrabacionRealScreen> {
   bool _subiendo = false;
   String? _mensaje;
 
+  final _recorder = AudioRecorder(); // Instancia única
   String? _audioPath;
 
+  @override
+  void dispose() {
+    _recorder.dispose();
+    super.dispose();
+  }
+
+  Future<bool> _pedirPermisos() async {
+    final status = await Permission.microphone.status;
+    if (!status.isGranted) {
+      final result = await Permission.microphone.request();
+      return result.isGranted;
+    }
+    return true;
+  }
+
   Future<void> _iniciarGrabacion() async {
+    final tienePermiso = await _pedirPermisos();
+    if (!tienePermiso) {
+      setState(() {
+        _mensaje = 'Permiso de micrófono denegado';
+      });
+      return;
+    }
+
+    if (await _recorder.isRecording()) {
+      setState(() {
+        _mensaje = "Ya hay una grabación activa.";
+      });
+      return;
+    }
+
     setState(() {
       _grabando = true;
       _mensaje = null;
     });
 
-    final record = AudioRecorder();
-    if (await record.hasPermission()) {
+    try {
       Directory tempDir = await getTemporaryDirectory();
-      String path =
+      _audioPath =
           '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
 
-      await record.start(
+      print("Grabando en: $_audioPath");
+
+      await _recorder.start(
         RecordConfig(
           encoder: AudioEncoder.wav,
-          bitRate: 128000,
+          bitRate: 16000,
           sampleRate: 16000,
         ),
-        path: path,
+        path: _audioPath!,
       );
 
-      _audioPath = path;
-    } else {
       setState(() {
-        _mensaje = 'No se concedió permiso de micrófono';
+        _mensaje = "Grabando...";
+      });
+    } catch (e) {
+      print('Error al iniciar grabación: $e');
+      setState(() {
+        _mensaje = "Error al iniciar grabación: $e";
+        _grabando = false;
       });
     }
   }
@@ -58,21 +95,33 @@ class _GrabacionRealScreenState extends State<GrabacionRealScreen> {
       _mensaje = 'Subiendo audio...';
     });
 
-    final record = AudioRecorder();
-    final path = await record.stop();
-    if (path == null) {
-      setState(() {
-        _mensaje = 'No se generó archivo de audio';
-        _subiendo = false;
-      });
-      return;
-    }
-
     try {
+      print('Intentando detener grabación...');
+      if (!await _recorder.isRecording()) {
+        setState(() {
+          _mensaje = 'No hay grabación activa';
+          _subiendo = false;
+        });
+        return;
+      }
+
+      final path = await _recorder.stop();
+      print("Grabación detenida. Path del archivo: $path");
+
+      if (path == null || !File(path).existsSync()) {
+        print("El archivo no existe en la ruta especificada");
+        setState(() {
+          _mensaje = "Error: No se encontró el archivo grabado";
+          _subiendo = false;
+        });
+        return;
+      }
+
       File file = File(path);
+
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('http://10.0.2.2:8000/api/evaluar-audio'),
+        Uri.parse('http://192.168.100.95:8000/api/evaluar-audio'),
       );
       request.files.add(
         await http.MultipartFile.fromPath(
@@ -82,7 +131,7 @@ class _GrabacionRealScreenState extends State<GrabacionRealScreen> {
         ),
       );
       request.fields['idpacientes'] = widget.paciente.id;
-      request.fields['idtiporesultado'] = '1'; // Ajusta según tu lógica
+      request.fields['idtiporesultado'] = '1';
 
       final response = await request.send();
       final respStr = await response.stream.bytesToString();
@@ -101,9 +150,10 @@ class _GrabacionRealScreenState extends State<GrabacionRealScreen> {
         if (mounted) Navigator.pop(context);
       });
     } catch (e) {
+      print('Error al detener/subir: $e');
       setState(() {
         _subiendo = false;
-        _mensaje = 'Error al subir audio: $e';
+        _mensaje = 'Error al detener/subir: $e';
       });
     }
   }

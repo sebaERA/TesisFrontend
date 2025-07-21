@@ -33,16 +33,33 @@ class HomeScreen extends StatelessWidget {
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Center(
-          child: ElevatedButton.icon(
-            onPressed: () {
-              Navigator.pushNamed(context, '/pacientes');
-            },
-            icon: const Icon(Icons.people),
-            label: const Text('Revisar pacientes'),
-            style: ElevatedButton.styleFrom(
-              minimumSize: const Size.fromHeight(50),
-              textStyle: const TextStyle(fontSize: 18),
-            ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pushNamed(context, '/pacientes');
+                },
+                icon: const Icon(Icons.people),
+                label: const Text('Revisar pacientes'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(50),
+                  textStyle: const TextStyle(fontSize: 18),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pushNamed(context, '/prueba');
+                },
+                icon: const Icon(Icons.people),
+                label: const Text('grabación mínima'),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(50),
+                  textStyle: const TextStyle(fontSize: 18),
+                ),
+              ),
+            ],
           ),
         ),
       ),
