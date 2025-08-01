@@ -121,7 +121,9 @@ class _GrabacionRealScreenState extends State<GrabacionRealScreen> {
 
       var request = http.MultipartRequest(
         'POST',
-        Uri.parse('http://192.168.100.95:8000/api/evaluar-audio'),
+        Uri.parse(
+          'https://backendtesis-1044129606293.southamerica-west1.run.app/api/evaluar-audio',
+        ),
       );
       request.files.add(
         await http.MultipartFile.fromPath(
