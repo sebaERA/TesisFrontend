@@ -1,107 +1,104 @@
-// import 'dart:async';
-// import 'package:flutter/material.dart';
-// import 'package:noise_meter/noise_meter.dart';
-// import 'package:permission_handler/permission_handler.dart';
+import 'dart:async';
+import 'dart:collection';
+import 'package:noise_meter/noise_meter.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:flutter/foundation.dart';
 
-// void main() => runApp(const NoiseMeterApp());
+class NoiseWatcher {
+  final double noisyThresholdDb;     // p.ej. 52.0
+  final double quietThresholdDb;     // p.ej. 47.0 (histéresis)
+  final Duration noisyMinDuration;   // p.ej. 2s
+  final Duration quietMinDuration;   // p.ej. 1s
+  final Duration window;             // p.ej. 1500ms
 
-// class NoiseMeterApp extends StatefulWidget {
-//   const NoiseMeterApp({super.key});
-//   @override
-//   State<NoiseMeterApp> createState() => _NoiseMeterAppState();
-// }
+  final _noiseMeter = NoiseMeter();
+  StreamSubscription<NoiseReading>? _sub;
+  final _buffer = Queue<_Sample>();
+  DateTime? _noisySince;
+  DateTime? _quietSince;
 
-// class _NoiseMeterAppState extends State<NoiseMeterApp> {
-//   late NoiseMeter _noiseMeter;
-//   StreamSubscription<NoiseReading>? _noiseSubscription;
-//   NoiseReading? _latestReading;
-//   bool _isRecording = false;
+  ValueNotifier<bool> isNoisy = ValueNotifier<bool>(false);
+  ValueNotifier<double?> meanDb = ValueNotifier<double?>(null);
+  ValueNotifier<double?> maxDb = ValueNotifier<double?>(null);
 
-//   @override
-//   void initState() {
-//     super.initState();
-//     _noiseMeter = NoiseMeter(); // sin argumentos
-//   }
+  NoiseWatcher({
+    this.noisyThresholdDb = 52.0,
+    this.quietThresholdDb = 47.0,
+    this.noisyMinDuration = const Duration(seconds: 2),
+    this.quietMinDuration = const Duration(seconds: 1),
+    this.window = const Duration(milliseconds: 1500),
+  });
 
-//   @override
-//   void dispose() {
-//     _noiseSubscription?.cancel();
-//     super.dispose();
-//   }
+  Future<bool> _ensureMic() async {
+    final s = await Permission.microphone.request();
+    return s.isGranted;
+  }
 
-//   Callback de datos
-//   void _onData(NoiseReading reading) {
-//     setState(() {
-//       _latestReading = reading;
-//       _isRecording = true;
-//     });
-//   }
+  Future<void> start() async {
+    if (!await _ensureMic()) {
+      throw Exception('Permiso de micrófono denegado');
+    }
+    await stop(); // por si había una previa
+    _sub = _noiseMeter.noise.listen(_onData, onError: _onError, cancelOnError: true);
+  }
 
-//   Callback de error
-//   void _onError(Object error) {
-//     print('Error al medir ruido: $error');
-//     _stop();
-//   }
+  Future<void> stop() async {
+    await _sub?.cancel();
+    _sub = null;
+    _buffer.clear();
+    _noisySince = null;
+    _quietSince = null;
+  }
 
-//   Future<bool> _ensureMicPermission() async {
-//     if (await Permission.microphone.request().isGranted) return true;
-//     ScaffoldMessenger.of(context).showSnackBar(
-//       const SnackBar(content: Text('Permiso de micrófono denegado')),
-//     );
-//     return false;
-//   }
+  void _onData(NoiseReading r) {
+    final now = DateTime.now();
+    _buffer.addLast(_Sample(now, r.meanDecibel, r.maxDecibel));
 
-//   Future<void> _start() async {
-//     if (!await _ensureMicPermission()) return;
-//     try {
-//       Arrancas la suscripción al stream de ruido, capturando errores aquí
-//       _noiseSubscription = _noiseMeter.noise.listen(
-//         _onData,
-//         onError: _onError, // <— aquí va tu callback de error
-//         cancelOnError: true, // opcional: cancela la suscripción al primer error
-//       );
-//       setState(() => _isRecording = true);
-//     } catch (e) {
-//       print('No se pudo iniciar la grabación: $e');
-//     }
-//   }
+    // recorta ventana
+    final cutoff = now.subtract(window);
+    while (_buffer.isNotEmpty && _buffer.first.t.isBefore(cutoff)) {
+      _buffer.removeFirst();
+    }
 
-//   void _stop() {
-//     _noiseSubscription?.cancel();
-//     setState(() => _isRecording = false);
-//   }
+    // promedio en ventana
+    final m = _buffer.map((s) => s.mean).fold<double>(0.0, (a, b) => a + b) /
+        (_buffer.isEmpty ? 1 : _buffer.length);
+    final mx = _buffer.isEmpty ? r.maxDecibel : _buffer.map((s) => s.max).reduce((a, b) => a > b ? a : b);
 
-//   @override
-//   Widget build(BuildContext context) {
-//     final decibels = _latestReading?.meanDecibel.toStringAsFixed(1) ?? '--';
-//     final maxDb = _latestReading?.maxDecibel.toStringAsFixed(1) ?? '--';
+    meanDb.value = m;
+    maxDb.value = mx;
 
-//     return MaterialApp(
-//       home: Scaffold(
-//         appBar: AppBar(title: const Text('Noise Meter')),
-//         body: Center(
-//           child: Column(
-//             mainAxisAlignment: MainAxisAlignment.center,
-//             children: [
-//               Text(
-//                 _isRecording ? 'Grabando…' : 'Detenido',
-//                 style: const TextStyle(fontSize: 24),
-//               ),
-//               const SizedBox(height: 16),
-//               Text(
-//                 'Promedio: $decibels dB',
-//                 style: const TextStyle(fontSize: 18),
-//               ),
-//               Text('Máximo: $maxDb dB', style: const TextStyle(fontSize: 18)),
-//             ],
-//           ),
-//         ),
-//         floatingActionButton: FloatingActionButton(
-//           onPressed: _isRecording ? _stop : _start,
-//           backgroundColor: _isRecording ? Colors.red : Colors.green,
-//           child: Icon(_isRecording ? Icons.stop : Icons.mic),
-//         ),
-//       ),
-//     );
-//   }
-// }
+    // lógica de umbrales con histéresis
+    final noisyNow = m >= noisyThresholdDb;
+    final quietNow = m <= quietThresholdDb;
+
+    if (noisyNow) {
+      _noisySince ??= now;
+      _quietSince = null;
+      if (!isNoisy.value && now.difference(_noisySince!).compareTo(noisyMinDuration) >= 0) {
+        isNoisy.value = true;
+      }
+    } else if (quietNow) {
+      _quietSince ??= now;
+      _noisySince = null;
+      if (isNoisy.value && now.difference(_quietSince!).compareTo(quietMinDuration) >= 0) {
+        isNoisy.value = false;
+      }
+    } else {
+      // zona gris entre quietThresholdDb y noisyThresholdDb: no cambies estado hasta cumplir duraciones
+      _noisySince = null;
+      _quietSince = null;
+    }
+  }
+
+  void _onError(Object e) {
+    // Podrías reconectar o propagar el error
+  }
+}
+
+class _Sample {
+  final DateTime t;
+  final double mean;
+  final double max;
+  _Sample(this.t, this.mean, this.max);
+}

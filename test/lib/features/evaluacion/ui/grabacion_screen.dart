@@ -1,12 +1,16 @@
-import 'package:flutter/material.dart';
-import 'package:record/record.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:permission_handler/permission_handler.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
+
 import '../../pacientes/models/paciente.dart';
+import '../../utils/noise_watcher.dart'; // <-- tu clase NoiseWatcher
+
+enum RecordPhase { idle, checkingNoise, preCountdown, recording, uploading, done }
 
 class GrabacionRealScreen extends StatefulWidget {
   final Paciente paciente;
@@ -17,196 +21,396 @@ class GrabacionRealScreen extends StatefulWidget {
 }
 
 class _GrabacionRealScreenState extends State<GrabacionRealScreen> {
-  bool _grabando = false;
-  bool _subiendo = false;
+  // Flujo/UI
+  RecordPhase _phase = RecordPhase.idle;
   String? _mensaje;
+  String? _resultadoServidor;
 
-  final _recorder = AudioRecorder(); // Instancia única
-  String? _audioPath;
+  // Grabación
+  final _recorder = AudioRecorder();
+  String? _currentFilePath;
+
+  // Countdowns
+  Timer? _preTimer;
+  Timer? _recTimer;
+  int _preSecondsLeft = 0; // 3 -> 0
+  int _recSecondsLeft = 0; // 60 -> 0
+
+  // Ruido (NoiseWatcher)
+  late final NoiseWatcher _noise;
+
+  // Config
+  static const int kPreCountdown = 3;
+  static const int kRecordDuration = 60;
+
+  @override
+  void initState() {
+    super.initState();
+    // Configura tus umbrales/duraciones tal como definiste en NoiseWatcher
+    _noise = NoiseWatcher(
+      noisyThresholdDb: 52.0,
+      quietThresholdDb: 47.0,
+      noisyMinDuration: const Duration(seconds: 2),
+      quietMinDuration: const Duration(seconds: 1),
+      window: const Duration(milliseconds: 1500),
+    );
+    // Arranca el watcher apenas entra la pantalla
+    _noise.start().catchError((e) {
+      setState(() => _mensaje = 'No se pudo iniciar el medidor de ruido: $e');
+    });
+  }
 
   @override
   void dispose() {
+    _preTimer?.cancel();
+    _recTimer?.cancel();
+    _noise.stop();
     _recorder.dispose();
     super.dispose();
   }
 
-  Future<bool> _pedirPermisos() async {
-    final status = await Permission.microphone.status;
-    if (!status.isGranted) {
-      final result = await Permission.microphone.request();
-      return result.isGranted;
+  Future<void> _onTapIniciarFlujo() async {
+    if (_phase != RecordPhase.idle) return;
+
+    setState(() {
+      _mensaje = null;
+      _resultadoServidor = null;
+      _phase = RecordPhase.checkingNoise;
+    });
+
+    final okRuido = await _waitForQuietWithUI();
+    if (!mounted) return;
+
+    if (!okRuido) {
+      // Si quieres, deja un botón Reintentar. Por ahora, volvemos a idle con mensaje.
+      setState(() {
+        _phase = RecordPhase.idle;
+        _mensaje = 'Ambiente ruidoso. Intenta en un entorno más silencioso.';
+      });
+      return;
     }
-    return true;
+
+    // 2) Cuenta regresiva 3s
+    setState(() {
+      _phase = RecordPhase.preCountdown;
+      _preSecondsLeft = kPreCountdown;
+      _mensaje = 'Iniciando en...';
+    });
+
+    _preTimer?.cancel();
+    _preTimer = Timer.periodic(const Duration(seconds: 1), (t) async {
+      if (!mounted) return;
+      setState(() => _preSecondsLeft--);
+      if (_preSecondsLeft <= 0) {
+        t.cancel();
+        await _iniciarGrabacion();
+      }
+    });
+  }
+
+  /// Espera hasta que NoiseWatcher reporte estado "silencioso".
+  /// Devuelve true si se logra, false si se agota el tiempo (10s).
+  Future<bool> _waitForQuietWithUI() async {
+    // Si ya está silencioso, listo
+    if (_noise.isNoisy.value == false) return true;
+
+    // Escucha cambios de isNoisy hasta 10 s
+    final completer = Completer<bool>();
+    late void Function() listener;
+
+    // Seguridad de timeout por si nunca baja el ruido
+    final timeout = Timer(const Duration(seconds: 10), () {
+      _noise.isNoisy.removeListener(listener);
+      if (!completer.isCompleted) completer.complete(false);
+    });
+
+    listener = () {
+      // Cuando NoiseWatcher pase a false (ya cumplió histéresis y duración quieta), seguimos
+      if (_noise.isNoisy.value == false) {
+        timeout.cancel();
+        _noise.isNoisy.removeListener(listener);
+        if (!completer.isCompleted) completer.complete(true);
+      } else {
+        // sigue ruidoso; mantenemos UI mostrando “Comprobando…”
+      }
+      // Actualiza UI con dB en vivo si quieres:
+      if (mounted && _phase == RecordPhase.checkingNoise) {
+        setState(() {}); // para refrescar dB promedio mostrado
+      }
+    };
+
+    _noise.isNoisy.addListener(listener);
+
+    // Mensaje inicial
+    setState(() => _mensaje = 'Comprobando ruido externo…');
+
+    // También actualiza dB mientras esperamos
+    return completer.future;
   }
 
   Future<void> _iniciarGrabacion() async {
-    final tienePermiso = await _pedirPermisos();
-    if (!tienePermiso) {
-      setState(() {
-        _mensaje = 'Permiso de micrófono denegado';
-      });
-      return;
-    }
-
-    if (await _recorder.isRecording()) {
-      setState(() {
-        _mensaje = "Ya hay una grabación activa.";
-      });
-      return;
-    }
-
-    setState(() {
-      _grabando = true;
-      _mensaje = null;
-    });
-
     try {
-      Directory tempDir = await getTemporaryDirectory();
-      _audioPath =
-          '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
-
-      print("Grabando en: $_audioPath");
+      final tmp = await getTemporaryDirectory();
+      final filePath =
+          '${tmp.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
+      _currentFilePath = filePath;
 
       await _recorder.start(
         RecordConfig(
           encoder: AudioEncoder.wav,
-          bitRate: 16000,
           sampleRate: 16000,
+          numChannels: 1,
         ),
-        path: _audioPath!,
+        path: filePath,
       );
 
       setState(() {
-        _mensaje = "Grabando...";
+        _phase = RecordPhase.recording;
+        _mensaje = 'Grabando…';
+        _recSecondsLeft = kRecordDuration;
+      });
+
+      _recTimer?.cancel();
+      _recTimer = Timer.periodic(const Duration(seconds: 1), (t) async {
+        if (!mounted) return;
+        setState(() => _recSecondsLeft--);
+        if (_recSecondsLeft <= 0) {
+          t.cancel();
+          await _detenerGrabacionYSubir();
+        }
       });
     } catch (e) {
-      print('Error al iniciar grabación: $e');
       setState(() {
-        _mensaje = "Error al iniciar grabación: $e";
-        _grabando = false;
+        _phase = RecordPhase.idle;
+        _mensaje = 'Error al iniciar grabación: $e';
       });
     }
   }
 
   Future<void> _detenerGrabacionYSubir() async {
+    _recTimer?.cancel();
+
     setState(() {
-      _grabando = false;
-      _subiendo = true;
-      _mensaje = 'Subiendo audio...';
+      _phase = RecordPhase.uploading;
+      _mensaje = 'Subiendo audio…';
     });
 
+    String? path;
     try {
-      print('Intentando detener grabación...');
-      if (!await _recorder.isRecording()) {
-        setState(() {
-          _mensaje = 'No hay grabación activa';
-          _subiendo = false;
-        });
-        return;
+      final isRecording = await _recorder.isRecording();
+      if (isRecording) {
+        path = await _recorder.stop();
+      } else {
+        path = _currentFilePath;
       }
-
-      final path = await _recorder.stop();
-      print("Grabación detenida. Path del archivo: $path");
 
       if (path == null || !File(path).existsSync()) {
-        print("El archivo no existe en la ruta especificada");
         setState(() {
-          _mensaje = "Error: No se encontró el archivo grabado";
-          _subiendo = false;
+          _phase = RecordPhase.idle;
+          _mensaje = 'No se encontró el archivo grabado.';
         });
         return;
       }
 
-      File file = File(path);
-
-      var request = http.MultipartRequest(
-        'POST',
-        Uri.parse(
-          'https://backendtesis-1044129606293.southamerica-west1.run.app/api/evaluar-audio',
-        ),
+      final uri = Uri.parse(
+        'https://backendtesis-1044129606293.southamerica-west1.run.app/api/evaluar-audio',
       );
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'file',
-          file.path,
-          contentType: MediaType('audio', 'wav'),
-        ),
-      );
-      request.fields['idpacientes'] = widget.paciente.id;
-      request.fields['idtiporesultado'] = '1';
 
-      final response = await request.send();
-      final respStr = await response.stream.bytesToString();
+      final req = http.MultipartRequest('POST', uri)
+        ..files.add(
+          await http.MultipartFile.fromPath(
+            'file',
+            path,
+            contentType: MediaType('audio', 'wav'),
+          ),
+        )
+        ..fields['idpacientes'] = widget.paciente.id.toString()
+        ..fields['idtiporesultado'] = '1';
+
+      final client = http.Client();
+      http.StreamedResponse streamed;
+      try {
+        streamed = await client.send(req).timeout(const Duration(seconds: 40));
+      } on TimeoutException {
+        setState(() {
+          _phase = RecordPhase.idle;
+          _mensaje = 'Timeout al subir el audio (40s).';
+        });
+        return;
+      } on SocketException catch (e) {
+        setState(() {
+          _phase = RecordPhase.idle;
+          _mensaje = 'Error de red: $e';
+        });
+        return;
+      } finally {
+        client.close();
+      }
+
+      final respStr = await streamed.stream.bytesToString();
+      if (!mounted) return;
 
       setState(() {
-        _subiendo = false;
-        if (response.statusCode == 200) {
-          _mensaje = 'Audio subido y evaluado correctamente';
-        } else {
-          _mensaje = 'Error al subir audio: $respStr';
-        }
-      });
-
-      // Regresa automáticamente después de 2 segundos
-      Future.delayed(Duration(seconds: 2), () {
-        if (mounted) Navigator.pop(context);
+        _resultadoServidor =
+            (streamed.statusCode == 200) ? respStr : 'Error ${streamed.statusCode}: $respStr';
+        _mensaje = (streamed.statusCode == 200)
+            ? 'Audio subido y evaluado.'
+            : 'Fallo en evaluación.';
+        _phase = RecordPhase.done;
       });
     } catch (e) {
-      print('Error al detener/subir: $e');
       setState(() {
-        _subiendo = false;
+        _phase = RecordPhase.idle;
         _mensaje = 'Error al detener/subir: $e';
       });
+    } finally {
+      // Limpieza del temporal
+      final toDelete = path ?? _currentFilePath;
+      if (toDelete != null) {
+        try {
+          final f = File(toDelete);
+          if (f.existsSync()) {
+            await f.delete();
+          }
+        } catch (_) {}
+      }
+      _currentFilePath = null;
     }
+  }
+
+  String _formatMMSS(int s) {
+    final m = (s ~/ 60).toString().padLeft(2, '0');
+    final ss = (s % 60).toString().padLeft(2, '0');
+    return '$m:$ss';
   }
 
   @override
   Widget build(BuildContext context) {
+    final isIdle = _phase == RecordPhase.idle;
+    final isChecking = _phase == RecordPhase.checkingNoise;
+    final isPre = _phase == RecordPhase.preCountdown;
+    final isRec = _phase == RecordPhase.recording;
+    final isUp = _phase == RecordPhase.uploading;
+    final isDone = _phase == RecordPhase.done;
+
     return Scaffold(
-      appBar: AppBar(title: Text('Grabación Real')),
+      appBar: AppBar(title: const Text('Grabación Real')),
       body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text('Paciente: ${widget.paciente.nombre}'),
-            SizedBox(height: 32),
-            if (_grabando)
-              Text(
-                'Grabando...',
-                style: TextStyle(color: Colors.red, fontSize: 20),
-              ),
-            if (_subiendo)
-              Column(
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 12),
-                  Text(_mensaje ?? 'Subiendo...'),
-                ],
-              ),
-            if (!_grabando && !_subiendo)
-              ElevatedButton.icon(
-                icon: Icon(Icons.mic),
-                label: Text('Iniciar grabación'),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                onPressed: _iniciarGrabacion,
-              ),
-            if (_grabando)
-              ElevatedButton.icon(
-                icon: Icon(Icons.stop),
-                label: Text('Detener y subir'),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-                onPressed: _detenerGrabacionYSubir,
-              ),
-            if (_mensaje != null && !_subiendo)
-              Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Text(
-                  _mensaje!,
-                  style: TextStyle(color: Colors.blue),
-                  textAlign: TextAlign.center,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Text('Paciente: ${widget.paciente.nombre}'),
+              const SizedBox(height: 12),
+
+              // Indicador de ruido (opcional mostrar siempre)
+              ValueListenableBuilder<double?>(
+                valueListenable: _noise.meanDb,
+                builder: (_, m, __) => Text(
+                  'Ruido ambiente: ${m?.toStringAsFixed(1) ?? "--"} dB',
+                  style: const TextStyle(fontSize: 14),
                 ),
               ),
-          ],
+              const SizedBox(height: 6),
+              ValueListenableBuilder<bool>(
+                valueListenable: _noise.isNoisy,
+                builder: (_, noisy, __) => noisy
+                    ? Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withOpacity(0.15),
+                          border: Border.all(color: Colors.orange),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          isChecking
+                              ? 'Comprobando ruido externo…'
+                              : 'Ambiente ruidoso: espera a que baje (< ${_noise.quietThresholdDb.toStringAsFixed(0)} dB)',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: Colors.orange, fontWeight: FontWeight.w600),
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
+
+              const SizedBox(height: 16),
+
+              if (isPre) ...[
+                Text(_mensaje ?? 'Iniciando…', style: const TextStyle(fontSize: 16)),
+                const SizedBox(height: 8),
+                Text('${_preSecondsLeft}s',
+                    style: const TextStyle(fontSize: 36, fontWeight: FontWeight.bold)),
+              ],
+
+              if (isRec) ...[
+                const Text('Grabando…', style: TextStyle(color: Colors.red, fontSize: 18)),
+                const SizedBox(height: 8),
+                Text(_formatMMSS(_recSecondsLeft),
+                    style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+              ],
+
+              if (isUp) ...[
+                const CircularProgressIndicator(),
+                const SizedBox(height: 12),
+                Text(_mensaje ?? 'Subiendo…'),
+              ],
+
+              if ((isIdle || isDone) && _mensaje != null) ...[
+                const SizedBox(height: 8),
+                Text(_mensaje!),
+              ],
+
+              if (isDone && _resultadoServidor != null) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.black12,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: SingleChildScrollView(
+                    child: Text(_resultadoServidor!, textAlign: TextAlign.left),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 24),
+
+              if (isIdle)
+                ValueListenableBuilder<bool>(
+                  valueListenable: _noise.isNoisy,
+                  builder: (_, noisy, __) => ElevatedButton.icon(
+                    icon: const Icon(Icons.mic),
+                    label: const Text('Iniciar grabación'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: noisy ? Colors.grey : Colors.green,
+                    ),
+                    onPressed: noisy ? null : _onTapIniciarFlujo,
+                  ),
+                ),
+
+              if (isRec)
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.stop),
+                  label: const Text('Detener ahora'),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+                  onPressed: () async {
+                    _recTimer?.cancel();
+                    await _detenerGrabacionYSubir();
+                  },
+                ),
+
+              const SizedBox(height: 12),
+
+              if (!isUp)
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.arrow_back),
+                  label: const Text('Volver'),
+                  onPressed: () => Navigator.pop(context),
+                ),
+            ],
+          ),
         ),
       ),
     );
